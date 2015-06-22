@@ -6,6 +6,8 @@
  */
 package org.jitsi.impl.neomedia.recording;
 
+import net.sf.fmj.media.Log;
+
 import org.jitsi.service.neomedia.*;
 import org.jitsi.service.neomedia.recording.*;
 import org.jitsi.util.*;
@@ -20,228 +22,243 @@ import java.util.*;
  *
  * @author Boris Grozev
  */
-public class RecorderEventHandlerJSONImpl
-    implements RecorderEventHandler
-{
-    /**
-     * The <tt>Logger</tt> used by the <tt>RecorderEventHandlerJSONImpl</tt>
-     * class and its instances for logging output.
-     */
-    private static final Logger logger
-            = Logger.getLogger(RecorderEventHandlerJSONImpl.class);
+public class RecorderEventHandlerJSONImpl implements RecorderEventHandler {
+	/**
+	 * The <tt>Logger</tt> used by the <tt>RecorderEventHandlerJSONImpl</tt>
+	 * class and its instances for logging output.
+	 */
+	private static final Logger logger = Logger
+			.getLogger(RecorderEventHandlerJSONImpl.class);
 
-    /**
-     * Compares <tt>RecorderEvent</tt>s by their instant (e.g. timestamp).
-     */
-    private static final Comparator<RecorderEvent> eventComparator
-            = new Comparator<RecorderEvent>() {
-        @Override
-        public int compare(RecorderEvent a, RecorderEvent b)
-        {
-            return ((Long)a.getInstant()).compareTo(b.getInstant());
-        }
-    };
+	/**
+	 * Compares <tt>RecorderEvent</tt>s by their instant (e.g. timestamp).
+	 */
+	private static final Comparator<RecorderEvent> eventComparator = new Comparator<RecorderEvent>() {
+		@Override
+		public int compare(RecorderEvent a, RecorderEvent b) {
+			return ((Long) a.getInstant()).compareTo(b.getInstant());
+		}
+	};
 
-    File file;
-    private boolean closed = false;
+	File file;
+	private boolean closed = false;
 
-    private final List<RecorderEvent> audioEvents
-            = new LinkedList<RecorderEvent>();
+	private final List<RecorderEvent> audioEvents = new LinkedList<RecorderEvent>();
 
-    private final List<RecorderEvent> videoEvents
-            = new LinkedList<RecorderEvent>();
+	private final List<RecorderEvent> videoEvents = new LinkedList<RecorderEvent>();
 
-    /**
-     * {@inheritDoc}
-     */
-    public RecorderEventHandlerJSONImpl(String filename)
-        throws IOException
-    {
-        file = new File(filename);
-        if (!file.createNewFile())
-            throw new IOException("File exists or cannot be created: " + file);
+	private static HashMap<String, String> endpointMapping = new HashMap<String, String>();
 
-        if (!file.canWrite())
-            throw new IOException("Cannot write to file: " + file);
-    }
+	/**
+	 * {@inheritDoc}
+	 */
+	public RecorderEventHandlerJSONImpl(String filename) throws IOException {
+		file = new File(filename);
+		if (!file.createNewFile())
+			throw new IOException("File exists or cannot be created: " + file);
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public synchronized boolean handleEvent(RecorderEvent ev)
-    {
-        if (closed)
-            return false;
+		if (!file.canWrite())
+			throw new IOException("Cannot write to file: " + file);
+	}
 
-        MediaType mediaType = ev.getMediaType();
-        RecorderEvent.Type type = ev.getType();
-        long duration = ev.getDuration();
-        long ssrc = ev.getSsrc();
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public synchronized boolean handleEvent(RecorderEvent ev) {
+		logger.setLevelInfo();
+		logger.info("\n \n \n \n Test Log \n \n \n \n ");
+		if (closed)
+			return false;
 
-        /*
-         * For a RECORDING_ENDED event without a valid instant, find it's
-         * associated (i.e. with the same SSRC) RECORDING_STARTED event and
-         * compute the RECORDING_ENDED instance based on its duration.
-         */
-        if (RecorderEvent.Type.RECORDING_ENDED.equals(type)
-              && ev.getInstant() == -1
-              && duration != -1)
-        {
-            List<RecorderEvent> events =
-                    MediaType.AUDIO.equals(mediaType)
-                    ? audioEvents
-                    : videoEvents;
+		MediaType mediaType = ev.getMediaType();
+		RecorderEvent.Type type = ev.getType();
+		long duration = ev.getDuration();
+		long ssrc = ev.getSsrc();
 
-            RecorderEvent start = null;
-            for (RecorderEvent e : events)
-            {
-                if (RecorderEvent.Type.RECORDING_STARTED.equals(e.getType())
-                      && e.getSsrc() == ssrc)
-                {
-                    start = e;
-                    break;
-                }
-            }
+		/*
+		 * For a RECORDING_ENDED event without a valid instant, find it's
+		 * associated (i.e. with the same SSRC) RECORDING_STARTED event and
+		 * compute the RECORDING_ENDED instance based on its duration.
+		 */
+		if (RecorderEvent.Type.RECORDING_ENDED.equals(type)
+				&& ev.getInstant() == -1 && duration != -1) {
+			List<RecorderEvent> events = MediaType.AUDIO.equals(mediaType) ? audioEvents
+					: videoEvents;
 
-            if (start != null)
-                ev.setInstant(start.getInstant() + duration);
-        }
+			RecorderEvent start = null;
+			for (RecorderEvent e : events) {
 
-        if (MediaType.AUDIO.equals(mediaType))
-            audioEvents.add(ev);
-        else if (MediaType.VIDEO.equals(mediaType))
-            videoEvents.add(ev);
+				if (RecorderEvent.Type.RECORDING_STARTED.equals(e.getType())
+						&& e.getSsrc() == ssrc) {
+					start = e;
+					break;
+				}
+			}
 
-        try
-        {
-            writeAllEvents();
-        }
-        catch (IOException ioe)
-        {
-            logger.warn("Failed to write recorder events to file: ", ioe);
-            return false;
-        }
+			if (start != null)
+				ev.setInstant(start.getInstant() + duration);
+		}
 
-        return true;
-    }
+		if (MediaType.AUDIO.equals(mediaType)) {
+			audioEvents.add(ev);
+			logger.info("Adding audio event with src:" + ev.getSsrc());
+		} else if (MediaType.VIDEO.equals(mediaType)) {
+			videoEvents.add(ev);
+			logger.info("Adding video event with src:" + ev.getSsrc());
+		}
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public synchronized void close()
-    {
-        //XXX do we want to write everything again?
-        try
-        {
-            writeAllEvents();
-        }
-        catch (IOException ioe)
-        {
-            logger.warn("Failed to write recorder events to file: " + ioe);
-        }
-        finally
-        {
-            closed = true;
-        }
-    }
+		try {
+			writeAllEvents();
+		} catch (IOException ioe) {
+			logger.warn("Failed to write recorder events to file: ");
+			return false;
+		}
 
-    private void writeAllEvents()
-            throws IOException
-    {
-        Collections.sort(audioEvents, eventComparator);
-        Collections.sort(videoEvents, eventComparator);
-        int nbAudio = audioEvents.size();
-        int nbVideo = videoEvents.size();
+		return true;
+	}
 
-        if (nbAudio + nbVideo > 0)
-        {
-            FileWriter writer = new FileWriter(file, false);
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public synchronized void close() {
+		// XXX do we want to write everything again?
+		try {
+			writeAllEvents();
+		} catch (IOException ioe) {
+			logger.info("Failed to write recorder events to file: ");
+		} finally {
+			closed = true;
+		}
+	}
 
-            writer.write("{\n");
+	private void writeAllEvents() throws IOException {
+		Collections.sort(audioEvents, eventComparator);
+		Collections.sort(videoEvents, eventComparator);
+		int nbAudio = audioEvents.size();
+		int nbVideo = videoEvents.size();
 
-            if (nbAudio > 0)
-            {
-                writer.write("  \"audio\" : [\n");
-                writeEvents(audioEvents, writer);
+		Integer videoSize = nbVideo;
+		Integer audioSize = nbAudio;
 
-                if (nbVideo > 0)
-                    writer.write("  ],\n\n");
-                else
-                    writer.write("  ]\n\n");
-            }
+		log("Video Size :" + videoSize.toString());
+		log("Audio Size :" + audioSize.toString());
 
-            if (nbVideo > 0)
-            {
-                writer.write("  \"video\" : [\n");
-                writeEvents(videoEvents, writer);
-                writer.write("  ]\n");
-            }
+		if (nbAudio + nbVideo > 0) {
+			FileWriter writer = new FileWriter(file, false);
 
-            writer.write("}\n");
+			writer.write("{\n");
 
-            writer.close();
-        }
-    }
+			if (nbAudio > 0) {
+				writer.write("  \"audio\" : [\n");
+				writeEvents(audioEvents, writer);
 
-    private void writeEvents(List<RecorderEvent> events,
-                             FileWriter writer)
-            throws IOException
-    {
-        int idx = 0;
-        int size = events.size();
-        for (RecorderEvent ev : events)
-        {
-            if (++idx == size)
-                writer.write("    " + getJSON(ev) + "\n");
-            else
-                writer.write("    " + getJSON(ev)+",\n");
-        }
-    }
+				if (nbVideo > 0)
+					writer.write("  ],\n\n");
+				else
+					writer.write("  ]\n\n");
+			}
 
-    @SuppressWarnings("unchecked")
-    private String getJSON(RecorderEvent ev)
-    {
-        JSONObject json = new JSONObject();
-        json.put("instant", ev.getInstant());
+			if (nbVideo > 0) {
+				writer.write("  \"video\" : [\n");
+				logger.info("Writing video events");
+				writeEvents(videoEvents, writer);
+				writer.write("  ]\n");
+			}
 
-        json.put("type", ev.getType().toString());
+			writer.write("}\n");
 
-        MediaType mediaType = ev.getMediaType();
-        if (mediaType != null)
-            json.put("mediaType", mediaType.toString());
+			writer.close();
+		}
+	}
 
-        json.put("ssrc", ev.getSsrc());
+	private void writeEvents(List<RecorderEvent> events, FileWriter writer)
+			throws IOException {
+		int idx = 0;
+		int size = events.size();
+		for (RecorderEvent ev : events) {
+			if (++idx == size)
+				writer.write("    " + getJSON(ev) + "\n");
+			else
+				writer.write("    " + getJSON(ev) + ",\n");
+		}
+	}
 
-        long audioSsrc = ev.getAudioSsrc();
-        if (audioSsrc != -1)
-            json.put("audioSsrc", audioSsrc);
+	@SuppressWarnings("unchecked")
+	private String getJSON(RecorderEvent ev) {
+		JSONObject json = new JSONObject();
+		json.put("instant", ev.getInstant());
 
-        RecorderEvent.AspectRatio aspectRatio = ev.getAspectRatio();
-        if (aspectRatio != RecorderEvent.AspectRatio.ASPECT_RATIO_UNKNOWN)
-            json.put("aspectRatio", aspectRatio.toString());
+		json.put("type", ev.getType().toString());
 
-        long rtpTimestamp = ev.getRtpTimestamp();
-        if (rtpTimestamp != -1)
-            json.put("rtpTimestamp", rtpTimestamp);
+		MediaType mediaType = ev.getMediaType();
+		if (mediaType != null)
+			json.put("mediaType", mediaType.toString());
 
-        String endpointId = ev.getEndpointId();
-        if (endpointId != null)
-            json.put("endpointId", endpointId);
+		if (mediaType.VIDEO.equals(mediaType)) {
+			logger.info("Just now wrote a video event to json with srcc:"
+					+ ev.getSsrc());
+		}
 
-        String filename = ev.getFilename();
-        if (filename != null)
-        {
-            String bareFilename = filename;
-            int idx = filename.lastIndexOf('/');
-            int len = filename.length();
-            if  (idx != -1 && idx != len-1)
-                bareFilename = filename.substring(1 + idx, len);
+		json.put("ssrc", ev.getSsrc());
 
-            json.put("filename", bareFilename);
-        }
+		long audioSsrc = ev.getAudioSsrc();
+		if (audioSsrc != -1)
+			json.put("audioSsrc", audioSsrc);
 
-        return json.toJSONString();
-    }
+		RecorderEvent.AspectRatio aspectRatio = ev.getAspectRatio();
+		if (aspectRatio != RecorderEvent.AspectRatio.ASPECT_RATIO_UNKNOWN)
+			json.put("aspectRatio", aspectRatio.toString());
+
+		long rtpTimestamp = ev.getRtpTimestamp();
+		if (rtpTimestamp != -1)
+			json.put("rtpTimestamp", rtpTimestamp);
+
+		String endpointId = ev.getEndpointId();
+		if (endpointId != null)
+			json.put("endpointId", endpointId);
+
+		String participantName = ev.getParticipantName();
+		json.put("participant Name", participantName);
+
+		String filename = ev.getFilename();
+		if (filename != null) {
+			String bareFilename = filename;
+			int idx = filename.lastIndexOf('/');
+			int len = filename.length();
+			if (idx != -1 && idx != len - 1)
+				bareFilename = filename.substring(1 + idx, len);
+
+			json.put("filename", bareFilename);
+		}
+
+		createMapping(ev);
+
+		return json.toJSONString();
+
+	}
+
+	private void createMapping(RecorderEvent ev) {
+
+		if (endpointMapping.get(ev.getEndpointId()) == null) {
+			logger.info("Adding endpoint ID to the mapping:"
+					+ ev.getEndpointId());
+			endpointMapping.put(ev.getEndpointId(), ev.getParticipantName());
+			for (String s : endpointMapping.keySet()) {
+				Log.info("\n " + s + ":");
+				logger.info(endpointMapping.get(s));
+			}
+		}
+
+	}
+
+	public static HashMap<String, String> getEndpointMapping() {
+		return endpointMapping;
+	}
+
+	private static void log(String s) {
+		System.err.println(s);
+	}
+
 }
